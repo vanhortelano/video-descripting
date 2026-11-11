@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14171c">
+<title>Voice Teleprompter + Camera</title>
+<style>
+  :root{
+    --bg:#14171c; --panel:#1d222a; --line:#2c333d; --text:#e8e6e1; --dim:#9aa4b1;
+    --read:#8a93a0; --now:#ffd54a; --accent:#5fb7a5; --danger:#e5604d;
+    --fs:30px; --lines:3; --bw:720px; --op:.85;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+    -webkit-tap-highlight-color:transparent}
+  button,select,textarea,input{font:inherit;color:inherit}
+  button{background:var(--panel);border:1px solid var(--line);padding:9px 16px;border-radius:8px;cursor:pointer;touch-action:manipulation}
+  button:hover{border-color:var(--accent)}
+  button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button.primary{background:var(--accent);color:#0c1512;border-color:var(--accent);font-weight:600}
+  button.danger{background:var(--danger);border-color:var(--danger);color:#fff;font-weight:600}
+
+  /* ---------- setup ---------- */
+  #setup{max-width:860px;margin:0 auto;padding:28px 20px 60px}
+  #setup h1{font-size:22px;margin:0 0 4px}
+  #setup p.sub{margin:0 0 18px;color:var(--dim);font-size:14px;line-height:1.5}
+  textarea{width:100%;height:40vh;min-height:240px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:14px;line-height:1.6;font-size:15px;resize:vertical}
+  .row{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:center;margin:14px 0}
+  .row label{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--dim)}
+  select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-width:100%}
+  input[type=range]{accent-color:var(--accent)}
+  .note{font-size:13px;color:var(--dim);margin:-4px 0 8px;line-height:1.5}
+  #warn{display:none;background:#3a2a1c;border:1px solid #6b4a2a;color:#f3cf9f;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:14px;line-height:1.5}
+  #phoneNote{display:none;background:#1c2b33;border:1px solid #2c4a57;color:#bfe0ea;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:14px;line-height:1.5}
+  #results{margin-top:28px;display:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #results h2{margin:0 0 10px;font-size:16px}
+  #player{width:100%;max-height:60vh;background:#000;border-radius:8px;margin:6px 0 10px}
+  #resultNote{font-size:14px;color:var(--dim);margin:0 0 8px;line-height:1.5}
+  a.dl{color:var(--accent)}
+
+  /* ---------- prompter ---------- */
+  #stage{display:none;position:fixed;inset:0;background:#000}
+  #cam{position:fixed;inset:0;z-index:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);background:#000}
+  #bar{
+    position:fixed;top:0;left:50%;transform:translateX(-50%);
+    width:min(var(--bw),96vw);z-index:50;
+    background:rgba(10,12,15,var(--op));
+    border:1px solid var(--line);border-top:none;border-radius:0 0 14px 14px;
+    box-shadow:0 10px 30px rgba(0,0,0,.45);
+    will-change:transform;
+  }
+  #box{
+    position:relative;overflow:hidden;
+    height:calc(var(--fs) * 1.5 * var(--lines) + 16px);
+    padding:8px 22px;
+    font-size:var(--fs);line-height:1.5;
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12%,#000 88%,transparent 100%);
+            mask-image:linear-gradient(to bottom,transparent 0,#000 12%,#000 88%,transparent 100%);
+  }
+  #box span.w{cursor:pointer}
+  #box span.done{color:var(--read)}
+  #box span.cur{color:var(--now);font-weight:600}
+  #ctrl{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;
+    padding:7px 10px 9px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
+  #ctrl button{padding:5px 11px;font-size:13px}
+  #ctrl.collapsed > :not(.keep){display:none !important}
+  #rec{display:inline-flex;gap:6px;align-items:center}
+  #rec i{width:9px;height:9px;border-radius:50%;background:var(--danger);animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){#rec i{animation:none}}
+  #meter{width:60px;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+  #meter b{display:block;height:100%;width:100%;background:var(--accent);transform-origin:left;transform:scaleX(0)}
+  #status{min-width:130px;text-align:center}
+  #speed{display:inline-flex;gap:6px;align-items:center}
+  #speed input{width:80px}
+
+  /* drag handle (in-page mode only) */
+  #grip{height:16px;cursor:grab;display:flex;align-items:center;justify-content:center;
+    color:var(--dim);font-size:11px;letter-spacing:2px;user-select:none;touch-action:none;
+    border-top:1px solid var(--line);border-radius:0 0 14px 14px}
+  #grip:hover{color:var(--text);background:rgba(255,255,255,.05)}
+  #grip:active{cursor:grabbing}
+  #bar.moved{border-top:1px solid var(--line);border-radius:14px}
+  #bar.moved #grip{border-radius:0 0 14px 14px}
+  #floatHint{display:none;position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:4;
+    background:rgba(10,12,15,.8);border:1px solid var(--line);color:var(--dim);
+    padding:8px 14px;border-radius:999px;font-size:13px;text-align:center;max-width:92vw}
+
+  /* ---------- phone: script pinned to the very top, right under the front camera ---------- */
+  body.mobile #bar{left:0;transform:none;width:100vw;border-left:none;border-right:none;
+    border-radius:0 0 12px 12px;padding-top:env(safe-area-inset-top)}
+  body.mobile #box{padding:6px 14px}
+  body.mobile #grip,body.mobile #popBtn,body.mobile .pcOnly{display:none !important}
+  body.mobile #ctrl{gap:6px;padding:6px 8px 8px}
+  body.mobile #ctrl button{padding:7px 10px}
+  body.mobile #status{min-width:0}
+  body.mobile #floatHint{bottom:calc(18px + env(safe-area-inset-bottom));border-radius:12px}
+
+  /* floating (pop-out) window mode */
+  body.pipmode{background:#0b0d10;overflow:hidden}
+  body.pipmode #grip,body.pipmode #menuBtn{display:none}
+  body.pipmode #bar{position:static !important;transform:none !important;width:100% !important;height:100vh;
+    border:none !important;border-radius:0 !important;
+    box-shadow:none;background:#0b0d10;display:flex;flex-direction:column}
+  body.pipmode #box{height:auto;flex:1;min-height:0}
+  body.pipmode #ctrl{flex:0 0 auto}
+</style>
+</head>
+<body>
+
+<!-- ===================== SETUP ===================== -->
+<div id="setup">
+  <h1>Voice Teleprompter + Camera</h1>
+  <p class="sub">Paste your script and press Start. Your camera fills the page and the script sits in a box at the top, right under the camera lens, so your eyes stay close to the camera while you read. Your voice and video are recorded.</p>
+
+  <div id="warn"></div>
+  <div id="phoneNote"></div>
+
+  <textarea id="script" spellcheck="false"></textarea>
+
+  <div class="row">
+    <label>Scrolling mode
+      <select id="mode">
+        <option value="voice">Follow my voice (listens to your words)</option>
+        <option value="pace">Auto pace: moves while you speak (no word matching)</option>
+        <option value="manual">Manual only (buttons / tap words)</option>
+      </select>
+    </label>
+  </div>
+  <p id="modeNote" class="note"></p>
+  <div class="row" id="creepRow">
+    <label><input type="checkbox" id="creep" checked> Keep moving when it can't recognise a word (helps with Bisaya / Tagalog words)</label>
+  </div>
+  <div class="row">
+    <label id="wpmLbl">Reading speed <input type="range" id="wpm" min="60" max="220" value="130"> <span id="wpmVal">130</span> words/min</label>
+    <label>Mic sensitivity <input type="range" id="sens" min="1" max="10" value="5"></label>
+  </div>
+  <div class="row">
+    <label>Speech language
+      <select id="lang">
+        <option value="en-PH">English (Philippines), best for Taglish / Bislish</option>
+        <option value="en-US">English (US)</option>
+        <option value="fil-PH">Filipino / Tagalog</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label>Text size <input type="range" id="size" min="18" max="56" value="30"></label>
+    <label>Lines shown <input type="range" id="lines" min="1" max="6" value="3"> <span id="linesVal">3</span></label>
+    <label class="pcOnly">Script width <input type="range" id="bw" min="360" max="1100" step="20" value="720"></label>
+    <label>Box opacity <input type="range" id="opac" min="30" max="100" value="85"></label>
+  </div>
+  <p class="note pcOnly">Tip for eye contact: a <b>narrow</b> script width and <b>2 or 3 lines</b> keep your eyes almost still, so viewers can't tell you are reading.</p>
+  <div class="row">
+    <label>Video quality
+      <select id="quality">
+        <option value="smooth">Smooth (480p, least lag)</option>
+        <option value="balanced">Balanced (720p)</option>
+        <option value="high">High (1080p, needs a strong device)</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="camToggle" checked> Show camera on screen</label>
+    <label><input type="checkbox" id="recordToggle" checked> Record (video + voice)</label>
+    <label class="pcOnly"><input type="checkbox" id="floatToggle" checked> Floating script box (always on top, can leave the browser)</label>
+  </div>
+
+  <button class="primary" id="startBtn">Start reading</button>
+
+  <div id="results">
+    <h2>Your recording</h2>
+    <p id="resultNote"></p>
+    <video id="player" controls playsinline></video>
+    <a id="dl" class="dl" download="my-recording.webm">Download recording</a>
+  </div>
+</div>
+
+<!-- ===================== PROMPTER ===================== -->
+<div id="stage">
+  <video id="cam" autoplay muted playsinline></video>
+  <div id="bar">
+    <div id="box"></div>
+    <div id="ctrl">
+      <span id="rec" class="keep"><i></i>REC</span>
+      <span id="meter" title="Microphone level"><b></b></span>
+      <span id="status" class="keep">Starting…</span>
+      <span id="speed" title="Speed for Auto pace, and for moving past words it cannot recognise">Speed <input type="range" id="wpmLive" min="60" max="220" value="130"></span>
+      <button id="popBtn" title="Float this box above all windows">Pop out</button>
+      <button id="fsMinus" title="Smaller text">A-</button>
+      <button id="fsPlus" title="Bigger text">A+</button>
+      <button id="backBtn" title="Go back one sentence (Left arrow)">Back</button>
+      <button id="fwdBtn" title="Skip one sentence (Right arrow)">Skip</button>
+      <button id="pauseBtn" class="keep">Pause</button>
+      <button class="danger keep" id="stopBtn">Stop</button>
+      <button id="menuBtn" class="keep" title="Show / hide the other buttons">☰</button>
+    </div>
+    <div id="grip" title="Drag to move the script box. Double-click to put it back at top center.">⋯⋯ drag to move ⋯⋯</div>
+  </div>
+  <div id="floatHint"></div>
+</div>
+
+<script>
+const DEFAULT_SCRIPT = `Good day, everyone!
+Today, I will share my understanding and personal opinion about the maritime dispute between the Philippines and China, particularly the West Philippine Sea.
+First, what is the main issue surrounding the West Philippine Sea dispute?
+For me, ang main issue ani kay ang conflicting claims sa Philippines ug China over the waters and resources in the South China Sea.
+China claims a large part of the area through its nine-dash line. However, some of these areas are within the Philippines' Exclusive Economic Zone or EEZ.
+This issue affects our country's rights, natural resources, and the livelihood of Filipino fishermen.
+Second, how does UNCLOS help determine the maritime rights of the Philippines?
+UNCLOS stands for United Nations Convention on the Law of the Sea. Basically, this is an international agreement nga naghatag og rules about the rights of countries over the ocean.
+Under UNCLOS, the Philippines has an Exclusive Economic Zone extending up to 200 nautical miles from its baselines. Within this area, naa tay rights to explore, use, and manage natural resources.
+For me, important ang UNCLOS because it gives countries legal rules to follow when it comes to maritime rights.
+Third, what is my understanding of the 2016 Arbitral Award, and why is it significant to the Philippines?
+The 2016 Arbitral Award was a decision released on July 12, 2016, after the Philippines filed a case against China.
+Ang akong pagsabot ani kay the tribunal ruled that China's historic rights claim within the nine-dash line had no legal basis under UNCLOS if it exceeded the maritime rights allowed by the Convention.
+Para nako, significant kaayo ni because it gave the Philippines a stronger legal basis to defend its maritime rights. It also showed that international law can be used to resolve disputes peacefully.
+Lastly, as a Filipino citizen, what is my personal reaction, and how should the Philippines protect its rights?
+As a Filipino citizen, concerned ko about this issue because the West Philippine Sea is important to our country.
+Dili lang ni about territory, but also about our natural resources, fishermen, and the future of our country.
+I believe nga dapat padayon nga i-assert sa Philippines ang atong rights through international law and diplomacy. We should also protect our fishermen and our maritime areas.
+As citizens, dapat pud nga aware ta sa issue because understanding our rights is one way of showing our responsibility to our country.
+To conclude, para nako, protecting the West Philippine Sea does not mean nga kinahanglan makig-away ta sa laing country. It means standing up for our rights through peaceful and legal ways.
+Because this is not just about the sea. It is also about our country, our people, and our future.
+Thank you!`;
+
+/* Cache every element once. Elements keep working after they are moved into the floating window. */
+const _el = {};
+document.querySelectorAll('[id]').forEach(e => { _el[e.id] = e; });
+const $ = id => _el[id];
+
+let pipWin = null;   // floating window (Document Picture-in-Picture, desktop Chrome/Edge only)
+const box = $('box');
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const isFile = location.protocol === 'file:';
+const isMobile = (navigator.userAgentData && navigator.userAgentData.mobile) ||
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+const canPip = 'documentPictureInPicture' in window && !isMobile;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (isMobile) document.body.classList.add('mobile');
+
+const QUALITY = {
+  smooth:   {w: 854,  h: 480,  vbr: 1200000},
+  balanced: {w: 1280, h: 720,  vbr: 2500000},
+  high:     {w: 1920, h: 1080, vbr: 5000000}
+};
+
+/* ---------- saved settings (so you don't retype your script on the phone) ---------- */
+const SAVE_IDS = ['script','mode','wpm','sens','lang','size','lines','bw','opac','quality','camToggle','recordToggle','floatToggle','creep'];
+function loadSettings() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem('tp-settings') || 'null'); } catch (_) {}
+  $('script').value = DEFAULT_SCRIPT;
+  $('mode').value = SR ? 'voice' : 'pace';
+  $('quality').value = isMobile ? 'smooth' : 'balanced';
+  if (!s) return;
+  SAVE_IDS.forEach(id => {
+    if (!(id in s)) return;
+    const e = $(id);
+    if (e.type === 'checkbox') e.checked = !!s[id]; else e.value = s[id];
+  });
+}
+function saveSettings() {
+  const s = {};
+  SAVE_IDS.forEach(id => { const e = $(id); s[id] = e.type === 'checkbox' ? e.checked : e.value; });
+  try { localStorage.setItem('tp-settings', JSON.stringify(s)); } catch (_) {}
+}
+loadSettings();
+
+/* ---------- warnings ---------- */
+const problems = [];
+if (!window.isSecureContext && !isFile) problems.push('<b>Camera and microphone are blocked</b> because this page is not opened from a secure (https) address. Upload this file to a free host such as Netlify Drop or GitHub Pages and open the https link instead.');
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) problems.push('This browser cannot access camera/microphone. Use Google Chrome or Microsoft Edge.');
+if (isFile && !isMobile) problems.push('<b>Important:</b> you opened this page directly from your disk (file://). Chrome/Edge then ask for the microphone again every time speech recognition restarts, and voice following works badly. Double-click <b>start-teleprompter.bat</b> (same folder) instead: it opens this page at http://localhost:8000, where you click <b>Allow</b> once and the voice following works properly.');
+if (isFile && isMobile) problems.push('<b>On a phone, opening the file directly does not allow camera/microphone.</b> Upload this file to a free https host (Netlify Drop, GitHub Pages, etc.) and open that link in Chrome.');
+if (SR == null && $('mode').value === 'voice') $('mode').value = 'pace';
+if (problems.length) { $('warn').style.display = 'block'; $('warn').innerHTML = problems.join('<br><br>'); }
+if (isMobile) {
+  $('phoneNote').style.display = 'block';
+  $('phoneNote').innerHTML = '<b>Phone mode:</b> the script is pinned to the very top of the screen, right under your front camera. Hold the phone upright (portrait). Phone browsers cannot float a box over other apps, so keep this page open while you record.' +
+    (SR ? ' If "Follow my voice" stops hearing you, switch to <b>Auto pace</b>: it works on every phone.' : ' This browser has no speech recognition, so use <b>Auto pace</b>.');
+  $('floatToggle').checked = false;
+}
+
+function updateModeNote() {
+  const m = $('mode').value;
+  $('modeNote').textContent =
+    m === 'pace' ? 'The words advance at your chosen speed, but only while the microphone hears you talking. Pause and it waits for you. If it gets ahead or behind, tap a word or use Back / Skip.' :
+    m === 'voice' ? 'Listens to the words you say and highlights where you are. Needs Chrome/Edge and internet. When you say a word it cannot recognise (common with Bisaya / Tagalog), it keeps moving gently at your reading speed and snaps back to you as soon as it hears an English word it knows.' :
+    'Nothing moves by itself. Use Back / Skip, arrow keys, or tap any word.';
+  $('wpmLbl').style.display = m === 'manual' ? 'none' : 'flex';
+  $('creepRow').style.display = m === 'voice' ? 'flex' : 'none';
+}
+$('mode').onchange = updateModeNote; updateModeNote();
+
+/* ---------- state ---------- */
+let words = [];
+let pos = 0, painted = -1, confirmed = 0;
+let running = false, paused = false;
+let recog = null, wantRecog = false, restartTimer = null, recogState = 'off', useTrack = true;
+let recogStartAt = 0, lastResultAt = 0, lastMatchAt = 0, recogFails = 0;
+let lastCount = {};
+let stream = null, recorder = null, chunks = [], recMime = '', wantRecord = false, hasVideo = false;
+let audioCtx = null, engineId = 0, heardSound = false, startedAt = 0;
+let lastVoice = 0, lastTick = 0, acc = 0, curMode = 'pace', wpm = 130, creepOn = true;
+let wakeLock = null, statusText = '', meterW = -1;
+
+function setStatus(t) { if (t !== statusText) { statusText = t; $('status').textContent = t; } }
+
+/* ---------- helpers ---------- */
+const norm = s => s.toLowerCase().replace(/[’‘]/g, "'").replace(/[^a-z0-9']/g, '');
+
+function lev(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 3;
+  let prev = Array.from({length: n + 1}, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+function similar(spoken, target) {
+  if (!spoken || !target) return false;
+  if (spoken === target) return true;
+  const len = Math.max(spoken.length, target.length);
+  if (len <= 3) return false;
+  return lev(spoken, target) <= (len <= 6 ? 1 : 2);
+}
+
+/* ---------- build script view ---------- */
+function build() {
+  const frag = document.createDocumentFragment();
+  words = [];
+  const lines = $('script').value.split(/\n/);
+  lines.forEach((line, li) => {
+    line.split(/\s+/).filter(Boolean).forEach(tok => {
+      const sp = document.createElement('span');
+      sp.className = 'w';
+      sp.textContent = tok + ' ';
+      sp.dataset.i = words.length;
+      frag.appendChild(sp);
+      words.push({el: sp, raw: tok, norm: norm(tok)});
+    });
+    if (li < lines.length - 1) frag.appendChild(document.createElement('br'));
+  });
+  box.innerHTML = '';
+  box.appendChild(frag);
+  pos = 0; confirmed = 0; acc = 0; painted = -1;
+  paint(true);
+}
+// one listener for all words (cheaper than one per word)
+box.addEventListener('click', e => {
+  const i = e.target && e.target.dataset && e.target.dataset.i;
+  if (i != null) setPos(Number(i));
+});
+
+/* Only touches the words that changed, so it stays fast on phones. */
+function paint(force) {
+  if (force || painted < 0) {
+    for (let i = 0; i < words.length; i++) {
+      const c = words[i].el.classList;
+      c.toggle('done', i < pos);
+      c.toggle('cur', i === pos);
+    }
+  } else if (pos !== painted) {
+    const a = Math.max(0, Math.min(pos, painted)), b = Math.min(words.length - 1, Math.max(pos, painted));
+    for (let i = a; i <= b; i++) {
+      const c = words[i].el.classList;
+      c.toggle('done', i < pos);
+      c.toggle('cur', i === pos);
+    }
+  } else return;
+  painted = pos;
+  const target = words[Math.min(pos, words.length - 1)];
+  if (target) {
+    const lines = Number($('lines').value) || 3;
+    const top = target.el.offsetTop - box.clientHeight * (lines <= 2 ? 0.1 : 0.34);
+    box.scrollTo({top: Math.max(0, top), behavior: reduceMotion ? 'auto' : 'smooth'});
+  }
+  if (pos >= words.length && running) setStatus('Finished 🎉');
+}
+function setPos(i) {
+  pos = Math.max(0, Math.min(words.length, i));
+  confirmed = pos; lastMatchAt = performance.now();
+  lastCount = {}; acc = 0; paint();
+}
+
+const END_RE = /[.!?]["')]*$/;
+function sentenceJump(dir) {
+  if (dir > 0) {
+    let i = pos;
+    while (i < words.length && !END_RE.test(words[i].raw)) i++;
+    setPos(i + 1);
+  } else {
+    let i = pos - 2;
+    while (i > 0 && !END_RE.test(words[i].raw)) i--;
+    setPos(i + 1 > 0 ? i + 1 : 0);
+  }
+}
+
+/* ---------- "follow my voice" mode (speech recognition) ---------- */
+const FAR = 30;
+function hit(j) {            // the person is at word j: move the highlight just after it
+  pos = j + 1; confirmed = pos; acc = 0;
+  lastMatchAt = performance.now();
+}
+function consume(toks, k) {
+  if (pos >= words.length) return;
+  const t = toks[k];
+  const n = k + 1 < toks.length ? toks[k + 1] : null;
+  // 1) the very next word you should read
+  if (similar(t, words[pos].norm)) return hit(pos);
+  // 2) skipped 1-2 words: accept only if the heard word is distinctive
+  for (let j = pos + 1; j < Math.min(words.length, pos + 3); j++) {
+    if (t.length >= 4 && similar(t, words[j].norm)) return hit(j);
+  }
+  // 3) the highlight moved ahead on its own (unrecognised words) and you are a bit behind it: pull it back
+  for (let j = confirmed; j < pos && j < words.length; j++) {
+    if ((t.length >= 5 && similar(t, words[j].norm)) ||
+        (n && j + 1 < words.length && similar(t, words[j].norm) && similar(n, words[j + 1].norm))) return hit(j);
+  }
+  // 4) further ahead: only if TWO words in a row match (so a common word never makes it jump)
+  if (n) {
+    for (let j = pos + 3; j < Math.min(words.length - 1, pos + FAR); j++) {
+      if (similar(t, words[j].norm) && similar(n, words[j + 1].norm)) return hit(j + 1);
+    }
+  }
+}
+function handleResult(e) {
+  const before = pos;
+  for (let i = e.resultIndex; i < e.results.length; i++) {
+    const toks = e.results[i][0].transcript.split(/\s+/).map(norm).filter(Boolean);
+    const from = lastCount[i] || 0;
+    for (let k = from; k < toks.length; k++) consume(toks, k);
+    lastCount[i] = toks.length;
+    if (e.results[i].isFinal) delete lastCount[i];
+  }
+  if (pos !== before) { paint(); setStatus('Following your voice'); }
+}
+function killRecog() {
+  if (recog) {
+    const r = recog; recog = null;
+    r.onstart = r.onresult = r.onerror = r.onend = null;
+    try { r.abort(); } catch (_) {}
+  }
+  recogState = 'off';
+}
+function startRecog() {
+  clearTimeout(restartTimer);
+  if (!SR || curMode !== 'voice' || !wantRecog || paused || !running) return;
+  killRecog();
+  const r = new SR();
+  recog = r;
+  r.continuous = true;
+  r.interimResults = true;
+  r.maxAlternatives = 1;
+  r.lang = $('lang').value;
+  r.onresult = e => { if (recog !== r) return; lastResultAt = performance.now(); recogFails = 0; handleResult(e); };
+  r.onstart = () => { if (recog !== r) return; recogState = 'on'; if (!paused) setStatus('Listening…'); };
+  r.onerror = ev => {
+    if (recog !== r) return;
+    const er = ev.error;
+    if (er === 'audio-capture' && useTrack) { useTrack = false; return; }   // retry without sharing the camera's mic track
+    if (er === 'not-allowed' || er === 'service-not-allowed' || er === 'audio-capture') {
+      fallbackToPace(isMobile ? 'Phone blocked voice following: switched to Auto pace' : 'Voice following blocked: switched to Auto pace');
+    } else if (er === 'network') {
+      recogFails++;
+      setStatus('Speech needs internet: retrying…');
+      if (recogFails >= 4) fallbackToPace('No internet for speech: switched to Auto pace');
+    } else if (er !== 'no-speech' && er !== 'aborted') {
+      setStatus('Speech: ' + er);
+    }
+  };
+  r.onend = () => {
+    if (recog !== r) return;
+    recogState = 'off'; lastCount = {};
+    if (wantRecog && !paused && running) restartTimer = setTimeout(startRecog, recogFails ? 1200 : 100);
+  };
+  recogState = 'starting';
+  recogStartAt = performance.now();
+  // Newer Chrome can listen to the SAME mic stream as the recorder. That stops phones
+  // from fighting over the microphone. Older browsers just ignore the extra argument.
+  const track = stream && stream.getAudioTracks()[0];
+  try {
+    if (track && useTrack && track.readyState === 'live') r.start(track); else r.start();
+  } catch (_) {
+    try { useTrack = false; r.start(); } catch (_) {}
+  }
+}
+function stopRecog() {
+  wantRecog = false;
+  clearTimeout(restartTimer);
+  killRecog();
+}
+function fallbackToPace(msg) {
+  stopRecog();
+  curMode = 'pace';
+  $('speed').style.display = 'inline-flex';
+  setStatus(msg);
+  statusHoldUntil = performance.now() + 4000;
+}
+let statusHoldUntil = 0;
+
+/* ---------- camera + microphone: ONE permission request ---------- */
+async function openMedia() {
+  const showCam = $('camToggle').checked;
+  const wantVideo = showCam || $('recordToggle').checked;
+  const q = QUALITY[$('quality').value] || QUALITY.balanced;
+  const audio = {echoCancellation: true, noiseSuppression: true, autoGainControl: true};
+  const vid = wantVideo ? {
+    width: {ideal: q.w}, height: {ideal: q.h},
+    frameRate: {ideal: 30, max: 30},
+    facingMode: 'user'
+  } : false;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio, video: vid});
+  } catch (err) {
+    if (vid) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({audio, video: false});
+        setStatus('Camera unavailable: mic only');
+      } catch (err2) { stream = null; setStatus('Mic error: ' + (err2.name || 'unavailable')); }
+    } else { stream = null; setStatus('Mic error: ' + (err.name || 'unavailable')); }
+  }
+  hasVideo = !!(stream && stream.getVideoTracks().length);
+  if (hasVideo) {
+    // tell the browser this is a talking-head video: favours smooth motion over sharpness
+    const vt = stream.getVideoTracks()[0];
+    try { vt.contentHint = 'motion'; } catch (_) {}
+  }
+  if (stream && hasVideo && showCam) {
+    $('cam').srcObject = stream;
+    $('cam').style.display = 'block';
+    try { await $('cam').play(); } catch (_) {}
+  } else {
+    $('cam').srcObject = null;
+    $('cam').style.display = 'none';
+  }
+}
+
+function pickMime(video) {
+  // H.264/MP4 is hardware-encoded on most phones and PCs, so it lags far less than VP9.
+  const types = video
+    ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1,opus',
+       'video/webm;codecs=h264,opus', 'video/webm;codecs=vp8,opus', 'video/mp4', 'video/webm']
+    : ['audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+  return types.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch (_) { return false; } }) || '';
+}
+
+function startRecorder() {
+  wantRecord = $('recordToggle').checked && !!stream;
+  if (!wantRecord) { $('rec').style.display = 'none'; return; }
+  const q = QUALITY[$('quality').value] || QUALITY.balanced;
+  try {
+    chunks = [];
+    recMime = pickMime(hasVideo);
+    const opts = {audioBitsPerSecond: 128000};
+    if (hasVideo) opts.videoBitsPerSecond = q.vbr;
+    if (recMime) opts.mimeType = recMime;
+    try { recorder = new MediaRecorder(stream, opts); }
+    catch (_) { recorder = new MediaRecorder(stream); }
+    recMime = recorder.mimeType || recMime || (hasVideo ? 'video/webm' : 'audio/webm');
+    recorder.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    recorder.onstop = finishRecording;
+    recorder.start(1000);
+    $('rec').style.display = 'inline-flex';
+  } catch (err) {
+    recorder = null; wantRecord = false;
+    $('rec').style.display = 'none';
+    setStatus('Recording unavailable');
+  }
+}
+
+function finishRecording() {
+  const blob = new Blob(chunks, {type: recMime});
+  const ext = recMime.includes('mp4') ? 'mp4' : recMime.includes('ogg') ? 'ogg' : 'webm';
+  const url = URL.createObjectURL(blob);
+  $('player').src = url;
+  $('dl').href = url;
+  $('dl').download = 'my-recording.' + ext;
+  $('resultNote').textContent = !blob.size
+    ? 'The recording is empty: the browser gave no data. Check the selected camera/microphone in the browser site settings.'
+    : (!heardSound ? 'Saved, but the mic level stayed silent. Check the selected microphone in your sound settings.' : '');
+  $('results').style.display = 'block';
+  releaseMedia();
+}
+function releaseMedia() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $('cam').srcObject = null;
+}
+
+/* ---------- keep the phone screen awake while reading ---------- */
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (_) {}
+}
+function releaseAwake() { try { if (wakeLock) wakeLock.release(); } catch (_) {} wakeLock = null; }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && running) {
+    keepAwake();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (curMode === 'voice' && wantRecog && !paused && recogState !== 'on') startRecog();
+  }
+});
+// some phones start the audio engine "suspended" until the screen is touched
+document.addEventListener('pointerdown', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); });
+
+/* ---------- mic level + pacing + speech watchdog (one loop) ---------- */
+function startEngine() {
+  if (!stream || !stream.getAudioTracks().length) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const src = audioCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+    const an = audioCtx.createAnalyser();
+    an.fftSize = 1024;
+    src.connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    heardSound = false; startedAt = lastTick = performance.now(); lastVoice = 0; acc = 0;
+    const meterBar = $('meter').firstElementChild;
+    const loop = () => {
+      const now = performance.now();
+      const dt = Math.min(250, now - lastTick); lastTick = now;
+      an.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      const w = Math.round(Math.min(1, rms * 4) * 20) / 20;
+      if (w !== meterW) { meterW = w; meterBar.style.transform = 'scaleX(' + w + ')'; }
+      const thr = 0.1 / (Number($('sens').value) + 1);   // higher sensitivity = lower threshold
+      if (rms > thr) { lastVoice = now; heardSound = true; }
+      if (rms > 0.008) heardSound = true;
+
+      if (!running || paused) return;
+      const speaking = now - lastVoice < 400;
+      const hold = now < statusHoldUntil;
+
+      if (curMode === 'pace' && pos < words.length) {
+        if (speaking) {
+          acc += dt / 1000 * wpm / 60;
+          let moved = false;
+          while (acc >= 1 && pos < words.length) { pos++; acc--; moved = true; }
+          if (moved) { confirmed = pos; paint(); }
+          if (!hold) setStatus('Speaking…');
+        } else if (!hold) setStatus('Waiting for you…');
+      }
+
+      if (curMode === 'voice' && pos < words.length) {
+        // A) creep forward when you're talking but the recogniser didn't catch the word
+        if (creepOn && speaking && now - lastMatchAt > 1400) {
+          const recogAlive = now - lastResultAt < 8000;
+          const cap = Math.min(words.length, recogAlive ? confirmed + 10 : words.length);
+          if (pos < cap) {
+            acc += dt / 1000 * wpm * 0.9 / 60;
+            let moved = false;
+            while (acc >= 1 && pos < cap) { pos++; acc--; moved = true; }
+            if (moved) { paint(); if (!hold) setStatus(recogAlive ? 'Moving with you…' : 'Voice not heard: pacing'); }
+          }
+        }
+        // B) watchdog: Chrome sometimes hangs on "Listening…" and stops sending words. Restart it.
+        if (wantRecog) {
+          if (recogState === 'starting' && now - recogStartAt > 5000) { setStatus('Reconnecting speech…'); startRecog(); }
+          else if (recogState === 'on' && speaking && now - lastResultAt > 6000 && now - recogStartAt > 6000) { setStatus('Reconnecting speech…'); startRecog(); }
+          else if (recogState === 'off' && now - recogStartAt > 4000) startRecog();
+        }
+      }
+      if (!heardSound && now - startedAt > 6000) setStatus('No sound from mic: check input');
+    };
+    // setInterval (not requestAnimationFrame) so it keeps running behind other windows
+    engineId = setInterval(loop, 50);
+  } catch (_) {}
+}
+function stopEngine() {
+  clearInterval(engineId);
+  if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
+  meterW = -1;
+  $('meter').firstElementChild.style.transform = 'scaleX(0)';
+}
+
+/* ---------- controls ---------- */
+async function start() {
+  saveSettings();
+  curMode = $('mode').value;
+  if (curMode === 'voice' && !SR) curMode = 'pace';
+  creepOn = $('creep').checked;
+  wpm = Number($('wpm').value);
+  $('wpmLive').value = wpm;
+  $('speed').style.display = curMode === 'manual' ? 'none' : 'inline-flex';
+  useTrack = true; recogFails = 0;
+  build();
+  $('setup').style.display = 'none';
+  $('stage').style.display = 'block';
+  running = true; paused = false;
+  $('pauseBtn').textContent = 'Pause';
+  statusText = ''; setStatus('Starting…');
+  $('results').style.display = 'none';
+  keepAwake();
+
+  await openMedia();            // the single permission request (camera + mic)
+  if (canPip && $('floatToggle').checked) {
+    // the browser only allows the floating window right after a click; if the camera
+    // prompt used that up, keep the script in the page and let the person click "Pop out"
+    if (!navigator.userActivation || navigator.userActivation.isActive) await popOut();
+    if (!pipWin) showHint('Script box is at the top of the page. Click "Pop out" to float it, or drag it with the strip under it.');
+  } else if (isMobile) {
+    showHint('Look at the top lines only: they sit right under your front camera.');
+  }
+  startRecorder();
+  const now = performance.now();
+  lastMatchAt = lastResultAt = recogStartAt = now;
+  startEngine();
+  if (curMode === 'voice') { wantRecog = true; startRecog(); }
+  else if (stream) setStatus(curMode === 'pace' ? 'Waiting for you…' : 'Manual mode');
+  window.scrollTo(0, 0);
+  setTimeout(() => paint(true), 60);
+}
+function showHint(t) {
+  const h = $('floatHint'); h.textContent = t; h.style.display = 'block';
+  clearTimeout(showHint.t); showHint.t = setTimeout(() => { if (!pipWin) h.style.display = 'none'; }, 7000);
+}
+function dockBack() {
+  pipWin = null;
+  const stage = $('stage'), bar = $('bar');
+  if (bar.parentNode !== stage) stage.appendChild(bar);
+  $('popBtn').textContent = 'Pop out';
+  $('floatHint').style.display = 'none';
+  setTimeout(() => paint(true), 50);
+}
+// watchdog: if the floating window vanishes for any reason, the script returns to the page
+setInterval(() => { if (pipWin && pipWin.closed) dockBack(); }, 500);
+function stop() {
+  running = false;
+  if (pipWin) { try { pipWin.close(); } catch (_) {} }
+  stopRecog();
+  stopEngine();
+  releaseAwake();
+  if (recorder && recorder.state !== 'inactive') {
+    try { recorder.requestData(); } catch (_) {}
+    recorder.stop();               // finishRecording() releases the camera/mic afterwards
+  } else {
+    releaseMedia();
+  }
+  recorder = null;
+  $('stage').style.display = 'none';
+  $('setup').style.display = 'block';
+}
+function togglePause() {
+  paused = !paused;
+  $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  if (recorder && recorder.state !== 'inactive') { try { paused ? recorder.pause() : recorder.resume(); } catch (_) {} }
+  if (paused) { stopRecog(); setStatus('Paused'); }
+  else {
+    lastMatchAt = lastResultAt = performance.now();
+    if (curMode === 'voice') { wantRecog = true; startRecog(); }
+  }
+}
+
+$('startBtn').onclick = start;
+$('stopBtn').onclick = stop;
+$('pauseBtn').onclick = togglePause;
+$('backBtn').onclick = () => sentenceJump(-1);
+$('fwdBtn').onclick = () => sentenceJump(1);
+$('menuBtn').onclick = () => $('ctrl').classList.toggle('collapsed');
+
+let fsVal = Number($('size').value) || 30;
+function setVar(name, v) {
+  document.documentElement.style.setProperty(name, v);
+  if (pipWin) pipWin.document.documentElement.style.setProperty(name, v);
+}
+function setFs(v) {
+  v = Math.max(16, Math.min(72, v));
+  fsVal = v;
+  setVar('--fs', v + 'px');
+  $('size').value = Math.min(56, Math.max(18, v));
+  paint(true);
+}
+$('size').oninput = e => setFs(Number(e.target.value));
+$('fsMinus').onclick = () => setFs(fsVal - 2);
+$('fsPlus').onclick = () => setFs(fsVal + 2);
+$('lines').oninput = e => { setVar('--lines', e.target.value); $('linesVal').textContent = e.target.value; };
+$('bw').oninput = e => setVar('--bw', e.target.value + 'px');
+$('opac').oninput = e => setVar('--op', e.target.value / 100);
+$('popBtn').onclick = () => { pipWin ? pipWin.close() : popOut(); };
+$('wpm').oninput = e => { $('wpmVal').textContent = e.target.value; };
+$('wpmLive').oninput = e => { wpm = Number(e.target.value); $('wpm').value = wpm; $('wpmVal').textContent = wpm; };
+// apply saved visual settings
+setFs(fsVal);
+$('lines').oninput({target: $('lines')});
+$('bw').oninput({target: $('bw')});
+$('opac').oninput({target: $('opac')});
+$('wpm').oninput({target: $('wpm')});
+if (!canPip) $('popBtn').style.display = 'none';
+
+function onKey(e) {
+  if (!running) return;
+  if (e.key === 'ArrowRight') sentenceJump(1);
+  if (e.key === 'ArrowLeft') sentenceJump(-1);
+  if (e.key === ' ' && e.target.tagName === 'BODY') { e.preventDefault(); togglePause(); }
+}
+document.addEventListener('keydown', onKey);
+
+/* ---------- drag the script box around inside the page (PC) ---------- */
+(function () {
+  const bar = $('bar'), grip = $('grip');
+  let dx = 0, dy = 0, dragging = false;
+  grip.addEventListener('pointerdown', e => {
+    const r = bar.getBoundingClientRect();
+    bar.style.transform = 'none';
+    bar.style.left = r.left + 'px';
+    bar.style.top = r.top + 'px';
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    dragging = true;
+    grip.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  grip.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const maxX = window.innerWidth - bar.offsetWidth;
+    const maxY = window.innerHeight - bar.offsetHeight;
+    const x = Math.max(0, Math.min(maxX, e.clientX - dx));
+    const y = Math.max(0, Math.min(maxY, e.clientY - dy));
+    bar.style.left = x + 'px';
+    bar.style.top = y + 'px';
+    bar.classList.toggle('moved', y > 2);
+  });
+  const end = () => { dragging = false; };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+  grip.addEventListener('dblclick', () => {
+    bar.style.left = '50%'; bar.style.top = '0'; bar.style.transform = 'translateX(-50%)';
+    bar.classList.remove('moved');
+  });
+})();
+
+/* ---------- floating window (desktop Chrome/Edge: always on top, can leave the browser) ---------- */
+async function popOut() {
+  if (pipWin) return true;
+  if (!canPip) {
+    setStatus(isMobile ? 'Phones cannot float the box' : 'Floating box needs Chrome/Edge 116+');
+    return false;
+  }
+  try {
+    pipWin = await documentPictureInPicture.requestWindow({width: 780, height: 240});
+  } catch (err) {
+    pipWin = null;
+    setStatus('Could not open floating box');
+    return false;
+  }
+  const w = pipWin, d = w.document;
+  d.title = 'Teleprompter';
+  d.head.appendChild(document.querySelector('style').cloneNode(true));
+  ['--fs', '--lines', '--bw', '--op'].forEach(v => {
+    const val = document.documentElement.style.getPropertyValue(v);
+    if (val) d.documentElement.style.setProperty(v, val);
+  });
+  d.body.className = 'pipmode';
+  d.body.appendChild($('bar'));
+  d.addEventListener('keydown', onKey);
+  w.addEventListener('pagehide', () => { if (pipWin === w) dockBack(); });
+  $('popBtn').textContent = 'Dock back';
+  $('floatHint').textContent = 'Script box is floating in its own window. Drag that window to the top of your screen, right under your webcam lens.';
+  $('floatHint').style.display = 'block';
+  try {
+    const W = 780, H = 240;
+    w.resizeTo(W, H);
+    w.moveTo(Math.round((screen.availLeft || 0) + (screen.availWidth - W) / 2), screen.availTop || 0);
+  } catch (_) {}
+  setTimeout(() => paint(true), 80);
+  return true;
+}
+</script>
+</body>
+</html>
